@@ -26,7 +26,8 @@ SECRET_KEY = "django-insecure-61@**61(@pb#(mpm+@&nksep%8@r)cdel8wxavi(92wa&_#&5(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['thddlsgur01050331.pythonanywhere.com', 'localhost', '127.0.0.1']
+
 
 
 # Application definition
@@ -125,4 +126,4 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 TIME_ZOME = 'Asia/Seoul'
 STATIX_ROOT = os.path.join(BASE_DIR, 'static')
-ALLOWED_HOSTS = ['127.0.0.1', 'pythonanywhere.com']
+ALLOWED_HOSTS = ['thddlsgur01050331.pythonanywhere.com', 'localhost', '127.0.0.1', 'pythonanywhere.com']
