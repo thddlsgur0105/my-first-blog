@@ -40,7 +40,20 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "blog",
+    "rest_framework",
 ]
+
+REST_FRAMEWORK = {
+    'DEFAULT_PERMISSION_CLASSES': [
+        # 'rest_framework.permissions.IsAdminUser',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'blog.renderers.UTF8JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+    'UNICODE_JSON': True,
+    'PAGE_SIZE': 10,
+}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -112,6 +125,9 @@ LANGUAGE_CODE = "ko"
 USE_I18N = True
 
 USE_TZ = True
+DEFAULT_CHARSET = 'utf-8'
+
+DEFAULT_CHARSET = 'utf-8'
 
 
 # Static files (CSS, JavaScript, Images)
@@ -125,5 +141,11 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 TIME_ZOME = 'Asia/Seoul'
-STATIX_ROOT = os.path.join(BASE_DIR, 'static')
-ALLOWED_HOSTS = ['thddlsgur01050331.pythonanywhere.com', 'localhost', '127.0.0.1', 'pythonanywhere.com']
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')
+ALLOWED_HOSTS = ['thddlsgur01050331.pythonanywhere.com', 'localhost', '127.0.0.1', 'pythonanywhere.com', '10.0.2.2']
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')
