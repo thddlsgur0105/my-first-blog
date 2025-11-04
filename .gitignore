@@ -4,3 +4,7 @@ __pycache__/
 db.sqlite3
 /static
 .DS_Store
+/app/build/
+/*.dex
+*.class
+*.apk
