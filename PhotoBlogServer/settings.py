@@ -26,7 +26,7 @@ SECRET_KEY = "django-insecure-61@**61(@pb#(mpm+@&nksep%8@r)cdel8wxavi(92wa&_#&5(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['thddlsgur01050331.pythonanywhere.com', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['thddlsgur01050331.pythonanywhere.com', 'localhost', '127.0.0.1', '0.0.0.0']
 
 
 
@@ -49,7 +49,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'blog.renderers.UTF8JSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
+        'rest_framework.renderers.JSONRenderer',
     ],
     'UNICODE_JSON': True,
     'PAGE_SIZE': 10,
@@ -142,7 +142,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 TIME_ZOME = 'Asia/Seoul'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
-ALLOWED_HOSTS = ['thddlsgur01050331.pythonanywhere.com', 'localhost', '127.0.0.1', 'pythonanywhere.com', '10.0.2.2']
+ALLOWED_HOSTS = ['thddlsgur01050331.pythonanywhere.com', 'localhost', '127.0.0.1', 'pythonanywhere.com', '10.0.2.2', '0.0.0.0']
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

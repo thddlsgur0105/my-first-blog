@@ -1,8 +1,13 @@
 package com.example.photoviewer;
 
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -11,15 +16,16 @@ import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
-import java.io.IOException;
+import java.io.DataOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -31,20 +37,33 @@ import java.util.List;
 public class MainActivity extends AppCompatActivity {
 
     TextView textView;
-    String siteUrl = "http://127.0.0.1:8000/";
-    String token = "";  // 인증이 필요한 경우 토큰을 여기에 입력
-
+    String siteUrl = "http://127.0.0.1:8000";
+    String token = "";  // 인증이 필요한 경우 토큰 입력
     CloadImage taskDownload;
+
+    private static final int PICK_IMAGE_REQUEST = 1;
+    private Uri selectedImageUri;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
         textView = findViewById(R.id.textView);
+
+        // 🔹 권한 확인
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (ContextCompat.checkSelfPermission(this,
+                    Manifest.permission.READ_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 100);
+            }
+        }
     }
 
+    // 🔹 서버에서 이미지 목록 가져오기
     public void onClickDownload(View v) {
+        Log.d("PhotoViewer", "✅ onClickDownload clicked");
         if (taskDownload != null && taskDownload.getStatus() == AsyncTask.Status.RUNNING) {
             taskDownload.cancel(true);
         }
@@ -53,130 +72,176 @@ public class MainActivity extends AppCompatActivity {
         Toast.makeText(getApplicationContext(), "Download", Toast.LENGTH_LONG).show();
     }
 
+    // 🔹 갤러리에서 이미지 선택
     public void onClickUpload(View v) {
-        Toast.makeText(getApplicationContext(), "Upload", Toast.LENGTH_LONG).show();
+        Intent intent = new Intent(Intent.ACTION_PICK, android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        startActivityForResult(intent, PICK_IMAGE_REQUEST);
     }
 
-    private class CloadImage extends AsyncTask<String, Integer, List<Bitmap>> {
+    // 🔹 선택된 이미지 URI 수신
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null) {
+            selectedImageUri = data.getData();
+            if (selectedImageUri != null) {
+                Toast.makeText(this, "이미지 선택 완료", Toast.LENGTH_SHORT).show();
+                new UploadImageTask().execute(selectedImageUri);
+            }
+        }
+    }
+
+    // 🔹 이미지 업로드 (multipart/form-data)
+    private class UploadImageTask extends AsyncTask<Uri, Void, String> {
         @Override
-        protected List<Bitmap> doInBackground(String... urls) {
-            List<Bitmap> bitmapList = new ArrayList<>();
-            HttpURLConnection conn = null;
+        protected String doInBackground(Uri... uris) {
+            String uploadUrl = siteUrl + "/api_root/Post/";
+            Uri imageUri = uris[0];
+            String boundary = "*****";
+            String LINE_FEED = "\r\n";
             try {
-                String apiUrl = urls[0];
-                Log.d("PhotoViewer", "API URL: " + apiUrl);
-                URL urlAPI = new URL(apiUrl);
-                conn = (HttpURLConnection) urlAPI.openConnection();
+                URL url = new URL(uploadUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setUseCaches(false);
+                conn.setDoOutput(true);
+                conn.setDoInput(true);
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
                 if (token != null && !token.isEmpty()) {
                     conn.setRequestProperty("Authorization", "Token " + token);
                 }
-                conn.setRequestProperty("Accept", "application/json");
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
+
+                DataOutputStream request = new DataOutputStream(conn.getOutputStream());
+                request.writeBytes("--" + boundary + LINE_FEED);
+                request.writeBytes("Content-Disposition: form-data; name=\"image\"; filename=\"upload.jpg\"" + LINE_FEED);
+                request.writeBytes("Content-Type: image/jpeg" + LINE_FEED);
+                request.writeBytes(LINE_FEED);
+
+                InputStream inputStream = getContentResolver().openInputStream(imageUri);
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                    request.write(buffer, 0, bytesRead);
+                }
+                inputStream.close();
+
+                request.writeBytes(LINE_FEED);
+                request.writeBytes("--" + boundary + "--" + LINE_FEED);
+                request.flush();
+                request.close();
 
                 int responseCode = conn.getResponseCode();
-                Log.d("PhotoViewer", "Response Code: " + responseCode);
-                
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    InputStream is = conn.getInputStream();
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
-                    StringBuilder result = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        result.append(line);
-                    }
-                    is.close();
+                Log.d("PhotoViewer", "Upload response code: " + responseCode);
 
-                    String strJson = result.toString();
-                    Log.d("PhotoViewer", "JSON Response: " + strJson.substring(0, Math.min(500, strJson.length())));
-                    
-                    JSONArray aryJson = new JSONArray(strJson);
-                    Log.d("PhotoViewer", "Total posts: " + aryJson.length());
-                    
-                    for (int i = 0; i < aryJson.length(); i++) {
-                        JSONObject post = aryJson.getJSONObject(i);
-                        String imageUrl = post.optString("image", "");
-                        Log.d("PhotoViewer", "Post " + i + " image URL: " + imageUrl);
-                        
-                        if (imageUrl != null && !imageUrl.isEmpty() && !imageUrl.equals("null")) {
-                            // 상대 경로인 경우 절대 URL로 변환
-                            if (imageUrl.startsWith("/")) {
-                                imageUrl = siteUrl + imageUrl;
-                            } else if (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://")) {
-                                imageUrl = siteUrl + "/" + imageUrl;
-                            }
-                            
-                            Log.d("PhotoViewer", "Downloading image from: " + imageUrl);
-                            
-                            try {
-                                URL myImageUrl = new URL(imageUrl);
-                                HttpURLConnection imgConn = (HttpURLConnection) myImageUrl.openConnection();
-                                imgConn.setConnectTimeout(10000);
-                                imgConn.setReadTimeout(10000);
-                                int imgResponseCode = imgConn.getResponseCode();
-                                
-                                if (imgResponseCode == HttpURLConnection.HTTP_OK) {
-                                    try (InputStream imgStream = imgConn.getInputStream()) {
-                                        Bitmap imageBitmap = BitmapFactory.decodeStream(imgStream);
-                                        if (imageBitmap != null) {
-                                            bitmapList.add(imageBitmap);
-                                            Log.d("PhotoViewer", "Image " + i + " loaded successfully");
-                                        } else {
-                                            Log.w("PhotoViewer", "Failed to decode image " + i);
-                                        }
-                                    }
-                                } else {
-                                    Log.w("PhotoViewer", "Image request failed with code: " + imgResponseCode);
-                                }
-                                imgConn.disconnect();
-                            } catch (Exception e) {
-                                Log.e("PhotoViewer", "Error loading image " + i + ": " + e.getMessage());
-                                e.printStackTrace();
-                            }
-                        } else {
-                            Log.d("PhotoViewer", "Post " + i + " has no image");
-                        }
-                    }
+                if (responseCode == HttpURLConnection.HTTP_CREATED || responseCode == HttpURLConnection.HTTP_OK) {
+                    return "업로드 성공!";
                 } else {
-                    Log.e("PhotoViewer", "API request failed with code: " + responseCode);
-                    InputStream errorStream = conn.getErrorStream();
-                    if (errorStream != null) {
-                        BufferedReader errorReader = new BufferedReader(new InputStreamReader(errorStream, StandardCharsets.UTF_8));
-                        StringBuilder errorResult = new StringBuilder();
-                        String errorLine;
-                        while ((errorLine = errorReader.readLine()) != null) {
-                            errorResult.append(errorLine);
-                        }
-                        Log.e("PhotoViewer", "Error response: " + errorResult.toString());
+                    BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8));
+                    StringBuilder errorMsg = new StringBuilder();
+                    String line;
+                    while ((line = errorReader.readLine()) != null) {
+                        errorMsg.append(line);
                     }
+                    return "업로드 실패: " + errorMsg;
                 }
-            } catch (IOException | JSONException e) {
-                Log.e("PhotoViewer", "Error: " + e.getMessage(), e);
+            } catch (Exception e) {
                 e.printStackTrace();
-            } finally {
-                if (conn != null) conn.disconnect();
+                return "오류: " + e.getMessage();
             }
-            Log.d("PhotoViewer", "Total images loaded: " + bitmapList.size());
-            return bitmapList;
         }
 
         @Override
-        protected void onPostExecute(List<Bitmap> images) {
-            if (isFinishing() || isDestroyed()) return;
-            if (images == null || images.isEmpty()) {
-                textView.setText("불러올 이미지가 없습니다.\nLogcat에서 오류를 확인하세요.");
-                Toast.makeText(getApplicationContext(), "이미지를 불러올 수 없습니다. Logcat 확인", Toast.LENGTH_LONG).show();
+        protected void onPostExecute(String result) {
+            Toast.makeText(getApplicationContext(), result, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    // 🔹 서버에서 이미지 다운로드
+    private class CloadImage extends AsyncTask<String, Integer, List<Bitmap>> {
+        @Override
+        protected List<Bitmap> doInBackground(String... urls) {
+            List<Bitmap> bitmaps = new ArrayList<>();
+            try {
+                String apiUrl = urls[0];
+                Log.d("PhotoViewer", "📡 Request to: " + apiUrl);
+                URL url = new URL(apiUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.connect();
+
+                int responseCode = conn.getResponseCode();
+                Log.d("PhotoViewer", "✅ Response Code: " + responseCode);
+
+                if (responseCode == 200) {
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(line);
+                    }
+                    reader.close();
+
+                    JSONArray jsonArray = new JSONArray(sb.toString());
+                    for (int i = 0; i < jsonArray.length(); i++) {
+                        JSONObject post = jsonArray.getJSONObject(i);
+                        if (post.has("image")) {
+                            String imageUrl = post.getString("image");
+
+                            if (imageUrl == null || imageUrl.equals("null") || imageUrl.isEmpty()) {
+                                continue;
+                            }
+
+                            // ✅ URL 보정 (중복 방지)
+                            if (!imageUrl.startsWith("http")) {
+                                imageUrl = siteUrl + imageUrl;
+                            }
+
+                            Log.d("PhotoViewer", "🖼 Image URL: " + imageUrl);
+
+                            URL imgUrl = new URL(imageUrl);
+                            HttpURLConnection imgConn = (HttpURLConnection) imgUrl.openConnection();
+                            imgConn.connect();
+                            InputStream is = imgConn.getInputStream();
+                            Bitmap bitmap = BitmapFactory.decodeStream(is);
+                            bitmaps.add(bitmap);
+                            is.close();
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.e("PhotoViewer", "❌ Error: " + e.getMessage(), e);
+            }
+            return bitmaps;
+        }
+
+        @Override
+        protected void onPostExecute(List<Bitmap> bitmaps) {
+            super.onPostExecute(bitmaps);
+
+            if (bitmaps.isEmpty()) {
+                Toast.makeText(getApplicationContext(), "표시할 이미지가 없습니다.", Toast.LENGTH_SHORT).show();
+                textView.setText("서버에 이미지가 없습니다.");
             } else {
-                textView.setText("이미지 " + images.size() + "개 로드 성공!");
+                Toast.makeText(getApplicationContext(), bitmaps.size() + "개의 이미지를 불러왔습니다.", Toast.LENGTH_SHORT).show();
+
                 RecyclerView recyclerView = findViewById(R.id.recyclerView);
-                ImageAdapter adapter = new ImageAdapter(images);
-                recyclerView.setLayoutManager(new LinearLayoutManager(MainActivity.this));
+                LinearLayoutManager layoutManager = new LinearLayoutManager(MainActivity.this);
+                layoutManager.setOrientation(LinearLayoutManager.VERTICAL);
+                recyclerView.setLayoutManager(layoutManager);
+                
+                // 부드러운 스크롤 및 성능 최적화
+                recyclerView.setNestedScrollingEnabled(true);
+                recyclerView.setHasFixedSize(false);
+                recyclerView.setItemViewCacheSize(20);
+
+                ImageAdapter adapter = new ImageAdapter(bitmaps);
                 recyclerView.setAdapter(adapter);
-                Toast.makeText(getApplicationContext(), "이미지 " + images.size() + "개 로드 완료", Toast.LENGTH_SHORT).show();
+                
+                // 상단으로 스크롤
+                recyclerView.smoothScrollToPosition(0);
+
+                textView.setText("✨ 총 " + bitmaps.size() + "개의 이미지가 표시됩니다.");
             }
         }
     }
 }
-
-
