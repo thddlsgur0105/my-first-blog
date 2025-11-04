@@ -3,6 +3,7 @@ package com.example.photoviewer;
 import android.Manifest;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -14,12 +15,19 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.textfield.TextInputEditText;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -54,24 +62,74 @@ public class MainActivity extends AppCompatActivity {
     RecyclerView recyclerView;
     ImageAdapter adapter;
     
-    String siteUrl = "https://thddlsgur01050331.pythonanywhere.com";
+    // LLM 챗봇 UI
+    TextInputEditText llmInputText;
+    MaterialButton llmSendButton;
+    TextView llmResponseText;
+    
+    String siteUrl;
     String token = "";
     CloadImage taskDownload;
+    
+    // LLM API 설정 (OpenAI)
+    String openaiApiKey;
+    String openaiApiUrl = "https://api.openai.com/v1/chat/completions";
+    LLMApiTask llmApiTask;
     
     private List<Bitmap> currentBitmaps = new ArrayList<>();
     private static final int PICK_IMAGE_REQUEST = 1;
     private static final int PERMISSION_REQUEST_CODE = 100;
     private Uri selectedImageUri;
+    
+    // URL 메모장 관련
+    private RecyclerView urlRecyclerView;
+    private UrlAdapter urlAdapter;
+    private List<String> urlList = new ArrayList<>();
+    private LinearLayout urlBookmarkContent;
+    private MaterialButton urlBookmarkToggle;
+    private MaterialButton urlAddButton;
+    private View urlBookmarkHeader;
+    private boolean isUrlBookmarkExpanded = false;
+    private static final String PREFS_NAME = "PhotoViewerPrefs";
+    private static final String KEY_URL_LIST = "url_list";
+    
+    // 상단 영역 접기/펼치기 관련
+    private LinearLayout topSectionContainer;
+    private MaterialButton toggleTopSectionButton;
+    private boolean isTopSectionExpanded = true;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         
+        // 🔹 .env 파일에서 환경 변수 로드
+        EnvConfig.loadEnv(this);
+        siteUrl = EnvConfig.get("SITE_URL", "https://thddlsgur01050331.pythonanywhere.com");
+        openaiApiKey = EnvConfig.get("OPENAI_API_KEY", "");
+        
         textView = findViewById(R.id.textView);
         progressBar = findViewById(R.id.progressBar);
         swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
         recyclerView = findViewById(R.id.recyclerView);
+        
+        // 🔹 LLM 챗봇 UI 초기화
+        llmInputText = findViewById(R.id.llmInputText);
+        llmSendButton = findViewById(R.id.llmSendButton);
+        llmResponseText = findViewById(R.id.llmResponseText);
+        
+        // 전송 버튼 클릭 이벤트
+        llmSendButton.setOnClickListener(v -> processLLMQuestion());
+        
+        // 키보드에서 전송 버튼(Enter) 클릭 이벤트
+        llmInputText.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEND || 
+                (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN)) {
+                processLLMQuestion();
+                return true;
+            }
+            return false;
+        });
         
         // RecyclerView 초기 설정
         LinearLayoutManager layoutManager = new LinearLayoutManager(this);
@@ -97,6 +155,196 @@ public class MainActivity extends AppCompatActivity {
 
         // 🔹 권한 확인
         checkPermissions();
+        
+        // 🔹 상단 영역 접기/펼치기 초기화
+        initTopSectionToggle();
+        
+        // 🔹 URL 메모장 초기화
+        initUrlBookmark();
+    }
+    
+    // 🔹 상단 영역 접기/펼치기 초기화
+    private void initTopSectionToggle() {
+        topSectionContainer = findViewById(R.id.topSectionContainer);
+        toggleTopSectionButton = findViewById(R.id.toggleTopSectionButton);
+        
+        // 초기 상태 설정 (펼쳐진 상태)
+        topSectionContainer.setAlpha(1.0f);
+        topSectionContainer.setVisibility(View.VISIBLE);
+        toggleTopSectionButton.setText("▼ 접기");
+        isTopSectionExpanded = true;
+        
+        toggleTopSectionButton.setOnClickListener(v -> toggleTopSection());
+    }
+    
+    // 🔹 상단 영역 접기/펼치기
+    private void toggleTopSection() {
+        isTopSectionExpanded = !isTopSectionExpanded;
+        
+        if (isTopSectionExpanded) {
+            // 펼치기
+            topSectionContainer.setVisibility(View.VISIBLE);
+            toggleTopSectionButton.setText("▼ 접기");
+            
+            // 애니메이션
+            topSectionContainer.animate()
+                    .alpha(1.0f)
+                    .setDuration(300)
+                    .start();
+        } else {
+            // 접기
+            topSectionContainer.animate()
+                    .alpha(0.0f)
+                    .setDuration(300)
+                    .withEndAction(() -> topSectionContainer.setVisibility(View.GONE))
+                    .start();
+            toggleTopSectionButton.setText("▲ 펼치기");
+        }
+    }
+    
+    // 🔹 URL 메모장 초기화
+    private void initUrlBookmark() {
+        urlRecyclerView = findViewById(R.id.urlRecyclerView);
+        urlBookmarkContent = findViewById(R.id.urlBookmarkContent);
+        urlBookmarkToggle = findViewById(R.id.urlBookmarkToggle);
+        urlAddButton = findViewById(R.id.urlAddButton);
+        urlBookmarkHeader = findViewById(R.id.urlBookmarkHeader);
+        
+        // RecyclerView 설정
+        LinearLayoutManager urlLayoutManager = new LinearLayoutManager(this);
+        urlLayoutManager.setOrientation(LinearLayoutManager.VERTICAL);
+        urlRecyclerView.setLayoutManager(urlLayoutManager);
+        urlRecyclerView.setHasFixedSize(false);
+        
+        // URL 목록 로드
+        loadUrlList();
+        
+        // 어댑터 설정
+        urlAdapter = new UrlAdapter(urlList);
+        urlAdapter.setOnUrlClickListener(url -> {
+            // URL 클릭 시 브라우저로 이동
+            try {
+                if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                    url = "https://" + url;
+                }
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                startActivity(intent);
+            } catch (Exception e) {
+                Toast.makeText(this, "URL을 열 수 없습니다: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                Log.e("PhotoViewer", "URL 열기 오류: " + e.getMessage());
+            }
+        });
+        
+        urlAdapter.setOnUrlDeleteListener((url, position) -> {
+            // URL 삭제 확인
+            new AlertDialog.Builder(this)
+                    .setTitle("URL 삭제")
+                    .setMessage("이 URL을 삭제하시겠습니까?\n" + url)
+                    .setPositiveButton("삭제", (dialog, which) -> {
+                        urlList.remove(position);
+                        urlAdapter.notifyItemRemoved(position);
+                        urlAdapter.notifyItemRangeChanged(position, urlList.size());
+                        saveUrlList();
+                        Toast.makeText(this, "URL이 삭제되었습니다.", Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("취소", null)
+                    .show();
+        });
+        
+        urlRecyclerView.setAdapter(urlAdapter);
+        
+        // 접기/펼치기 토글
+        urlBookmarkHeader.setOnClickListener(v -> toggleUrlBookmark());
+        urlBookmarkToggle.setOnClickListener(v -> toggleUrlBookmark());
+        
+        // URL 추가 버튼
+        urlAddButton.setOnClickListener(v -> showAddUrlDialog());
+    }
+    
+    // 🔹 URL 메모장 접기/펼치기
+    private void toggleUrlBookmark() {
+        isUrlBookmarkExpanded = !isUrlBookmarkExpanded;
+        
+        if (isUrlBookmarkExpanded) {
+            urlBookmarkContent.setVisibility(View.VISIBLE);
+            urlBookmarkToggle.setText("닫기");
+        } else {
+            urlBookmarkContent.setVisibility(View.GONE);
+            urlBookmarkToggle.setText("열기");
+        }
+    }
+    
+    // 🔹 URL 추가 다이얼로그
+    private void showAddUrlDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("URL 추가");
+        
+        final EditText input = new EditText(this);
+        input.setHint("예: https://www.pinterest.com 또는 pinterest.com");
+        input.setInputType(android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        builder.setView(input);
+        
+        builder.setPositiveButton("추가", (dialog, which) -> {
+            String url = input.getText().toString().trim();
+            if (!url.isEmpty()) {
+                // URL 형식 검증 및 정규화
+                if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                    url = "https://" + url;
+                }
+                
+                // 중복 체크
+                if (urlList.contains(url)) {
+                    Toast.makeText(this, "이미 등록된 URL입니다.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                
+                urlList.add(url);
+                urlAdapter.notifyItemInserted(urlList.size() - 1);
+                saveUrlList();
+                Toast.makeText(this, "URL이 추가되었습니다.", Toast.LENGTH_SHORT).show();
+                
+                // 펼쳐진 상태로 유지
+                if (!isUrlBookmarkExpanded) {
+                    toggleUrlBookmark();
+                }
+            } else {
+                Toast.makeText(this, "URL을 입력해주세요.", Toast.LENGTH_SHORT).show();
+            }
+        });
+        
+        builder.setNegativeButton("취소", null);
+        builder.show();
+    }
+    
+    // 🔹 URL 목록 저장
+    private void saveUrlList() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
+        
+        JSONArray jsonArray = new JSONArray();
+        for (String url : urlList) {
+            jsonArray.put(url);
+        }
+        
+        editor.putString(KEY_URL_LIST, jsonArray.toString());
+        editor.apply();
+    }
+    
+    // 🔹 URL 목록 로드
+    private void loadUrlList() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String jsonString = prefs.getString(KEY_URL_LIST, "[]");
+        
+        try {
+            JSONArray jsonArray = new JSONArray(jsonString);
+            urlList.clear();
+            for (int i = 0; i < jsonArray.length(); i++) {
+                urlList.add(jsonArray.getString(i));
+            }
+        } catch (Exception e) {
+            Log.e("PhotoViewer", "URL 목록 로드 오류: " + e.getMessage());
+            urlList.clear();
+        }
     }
 
     private void checkPermissions() {
@@ -120,6 +368,184 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "권한이 허용되었습니다.", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    // 🔹 LLM 질문 처리 및 답변 생성
+    private void processLLMQuestion() {
+        String question = llmInputText.getText() != null ? llmInputText.getText().toString().trim() : "";
+        
+        if (question.isEmpty()) {
+            llmResponseText.setText("질문을 입력해주세요.");
+            return;
+        }
+        
+        // 입력창 초기화
+        llmInputText.setText("");
+        
+        // 질문 처리 중 표시
+        llmResponseText.setText("처리 중...");
+        
+        // 기존 작업 취소
+        if (llmApiTask != null && llmApiTask.getStatus() == AsyncTask.Status.RUNNING) {
+            llmApiTask.cancel(true);
+        }
+        
+        // LLM API 호출
+        llmApiTask = new LLMApiTask();
+        llmApiTask.execute(question);
+    }
+    
+    // 🔹 LLM API 호출 AsyncTask
+    private class LLMApiTask extends AsyncTask<String, Void, String> {
+        @Override
+        protected String doInBackground(String... questions) {
+            String question = questions[0];
+            int imageCount = currentBitmaps.size();
+            
+            // API 키가 없으면 기본 응답 반환
+            if (openaiApiKey == null || openaiApiKey.isEmpty()) {
+                return generateFallbackResponse(question, imageCount);
+            }
+            
+            try {
+                // OpenAI API 호출
+                URL url = new URL(openaiApiUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("Authorization", "Bearer " + openaiApiKey);
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(30000);
+                
+                // 시스템 프롬프트와 사용자 질문 구성
+                String systemPrompt = "당신은 이미지 갤러리 앱의 어시스턴트입니다. " +
+                        "현재 업로드된 이미지 개수는 " + imageCount + "개입니다. " +
+                        "사용자의 질문에 친절하고 정확하게 답변해주세요. " +
+                        "이미지 개수에 대한 질문이면 정확한 개수를 알려주세요.";
+                
+                // JSON 요청 본문 생성 (JSONObject 사용으로 안전하게 처리)
+                JSONObject requestBody = new JSONObject();
+                requestBody.put("model", "gpt-3.5-turbo");
+                
+                JSONArray messages = new JSONArray();
+                
+                JSONObject systemMessage = new JSONObject();
+                systemMessage.put("role", "system");
+                systemMessage.put("content", systemPrompt);
+                messages.put(systemMessage);
+                
+                JSONObject userMessage = new JSONObject();
+                userMessage.put("role", "user");
+                userMessage.put("content", question);
+                messages.put(userMessage);
+                
+                requestBody.put("messages", messages);
+                requestBody.put("max_tokens", 500);
+                requestBody.put("temperature", 0.7);
+                
+                String jsonBody = requestBody.toString();
+                
+                // 요청 전송
+                DataOutputStream os = new DataOutputStream(conn.getOutputStream());
+                os.writeBytes(jsonBody);
+                os.flush();
+                os.close();
+                
+                int responseCode = conn.getResponseCode();
+                Log.d("PhotoViewer", "LLM API Response Code: " + responseCode);
+                
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    // 응답 읽기
+                    BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+                    StringBuilder response = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        response.append(line);
+                    }
+                    reader.close();
+                    
+                    // JSON 파싱
+                    JSONObject jsonResponse = new JSONObject(response.toString());
+                    JSONArray choices = jsonResponse.getJSONArray("choices");
+                    if (choices.length() > 0) {
+                        JSONObject message = choices.getJSONObject(0).getJSONObject("message");
+                        String content = message.getString("content");
+                        conn.disconnect();
+                        return content.trim();
+                    }
+                } else {
+                    // 에러 응답 읽기
+                    BufferedReader errorReader = new BufferedReader(
+                            new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8));
+                    StringBuilder errorResponse = new StringBuilder();
+                    String line;
+                    while ((line = errorReader.readLine()) != null) {
+                        errorResponse.append(line);
+                    }
+                    errorReader.close();
+                    conn.disconnect();
+                    
+                    Log.e("PhotoViewer", "LLM API Error: " + errorResponse.toString());
+                    return "API 호출 오류가 발생했습니다. 기본 응답을 표시합니다.\n\n" + 
+                           generateFallbackResponse(question, imageCount);
+                }
+                
+                conn.disconnect();
+            } catch (Exception e) {
+                Log.e("PhotoViewer", "LLM API 호출 오류: " + e.getMessage(), e);
+                return "오류가 발생했습니다: " + e.getMessage() + "\n\n" + 
+                       generateFallbackResponse(question, imageCount);
+            }
+            
+            return generateFallbackResponse(question, imageCount);
+        }
+        
+        @Override
+        protected void onPostExecute(String response) {
+            if (response != null && !response.isEmpty()) {
+                llmResponseText.setText(response);
+            } else {
+                llmResponseText.setText("응답을 받을 수 없습니다.");
+            }
+        }
+    }
+    
+    // 🔹 API 호출 실패 시 기본 응답 생성
+    private String generateFallbackResponse(String question, int imageCount) {
+        String lowerQuestion = question.toLowerCase();
+        
+        // 이미지 개수 관련 질문 패턴 인식
+        if (lowerQuestion.contains("몇") || lowerQuestion.contains("개수") || 
+            lowerQuestion.contains("개") || lowerQuestion.contains("수") ||
+            lowerQuestion.contains("how many") || lowerQuestion.contains("count") ||
+            lowerQuestion.contains("업로드") || lowerQuestion.contains("그림") ||
+            lowerQuestion.contains("이미지") || lowerQuestion.contains("사진") ||
+            lowerQuestion.contains("picture") || lowerQuestion.contains("image") ||
+            lowerQuestion.contains("photo")) {
+            
+            if (imageCount == 0) {
+                return "현재 업로드된 이미지가 없습니다. 동기화 버튼을 눌러 이미지를 불러오세요.";
+            } else {
+                return "현재 총 " + imageCount + "개의 이미지가 업로드되어 있습니다. ✨";
+            }
+        }
+        
+        // 인사 관련 질문
+        if (lowerQuestion.contains("안녕") || lowerQuestion.contains("hello") || 
+            lowerQuestion.contains("hi") || lowerQuestion.contains("반가")) {
+            return "안녕하세요! 이미지 개수에 대해 물어보시면 도와드릴 수 있습니다. 😊";
+        }
+        
+        // 도움말 관련 질문
+        if (lowerQuestion.contains("도움") || lowerQuestion.contains("help") || 
+            lowerQuestion.contains("뭐") || lowerQuestion.contains("무엇")) {
+            return "이미지 개수에 대해 물어보실 수 있습니다. 예: \"몇 개의 이미지가 있어?\", \"업로드된 그림이 몇 개야?\"";
+        }
+        
+        // 기본 응답
+        return "현재 업로드된 이미지는 " + imageCount + "개입니다. 다른 질문이 있으시면 물어보세요!";
     }
 
     // 🔹 서버에서 이미지 목록 가져오기
